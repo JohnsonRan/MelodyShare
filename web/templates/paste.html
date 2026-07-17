@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剪切板 · {{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/public.css">
+</head>
+<body class="public-page">
+<header class="public-toolbar">
+  {{template "brand-lockup" .}}
+  <div class="toolbar-actions">
+    {{template "theme-control" .}}
+    {{if .Authed}}<a class="button button-quiet" href="/">管理后台</a>{{else}}<a class="button button-quiet" href="/login">登录</a>{{end}}
+  </div>
+</header>
+<main class="focus-card paste-card">
+  <p class="eyebrow">临时文本</p>
+  <h1>创建剪切板</h1>
+  <form id="pasteForm" class="stack-form" method="post" action="/p">
+    <label class="field">内容
+      <textarea id="content" name="content" rows="12" placeholder="粘贴文本" required autofocus></textarea>
+    </label>
+    <label class="field field-compact">有效期
+      <select id="ttl" name="ttl">
+        <option value="30m">30 分钟</option>
+        <option value="2h" selected>2 小时</option>
+        <option value="8h">8 小时</option>
+        <option value="24h">24 小时</option>
+      </select>
+    </label>
+    <p class="notice">单条上限 {{.MaxSize}}</p>
+    <p class="notice notice-error" id="pasteError" role="alert" hidden></p>
+    <button type="submit" class="button button-primary button-wide" id="submitBtn">创建链接</button>
+  </form>
+  <div id="result" class="paste-result" aria-live="polite" hidden>
+    <code id="resultURL"></code>
+    <button type="button" class="button button-quiet" id="copyBtn">复制链接</button>
+  </div>
+  <details class="cli-help">
+    <summary>命令行</summary>
+    <code>echo hi | curl --data-binary @- {{.CurlBase}}</code>
+  </details>
+</main>
+<script src="/static/paste.js"></script>
+</body>
+</html>

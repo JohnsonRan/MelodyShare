@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · {{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/public.css">
+</head>
+<body class="public-page">
+<header class="public-toolbar">
+  {{template "brand-lockup" .}}
+  {{template "theme-control" .}}
+</header>
+<main class="focus-card message-card">
+  <div class="file-glyph" aria-hidden="true">!</div>
+  <h1>{{.Title}}</h1>
+  <p class="notice">{{.Detail}}</p>
+</main>
+</body>
+</html>

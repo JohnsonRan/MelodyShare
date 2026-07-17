@@ -1,0 +1,20 @@
+{{define "head-assets"}}
+<script src="/static/theme.js"></script>
+<link rel="icon" href="/static/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/style.css">
+{{end}}
+
+{{define "brand-lockup"}}
+<a class="brand-lockup" href="/" aria-label="{{.Site}} 首页">
+  <img class="brand-mark" src="/static/logo.svg" alt="" width="36" height="36">
+  <span class="brand-name">{{.Site}}</span>
+</a>
+{{end}}
+
+{{define "theme-control"}}
+<button type="button" class="theme-control" data-theme-control aria-label="外观">
+  <svg class="theme-icon theme-icon-system" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>
+  <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></svg>
+  <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+</button>
+{{end}}

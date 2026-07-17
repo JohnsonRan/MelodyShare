@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="app-page">
+<div class="app-shell">
+  <aside class="app-sidebar">
+    {{template "brand-lockup" .}}
+    <nav class="side-nav" aria-label="主导航">
+      <button class="nav-item is-active" type="button" data-view-target="files" aria-current="page"><span aria-hidden="true">⌁</span>文件</button>
+      <button class="nav-item" type="button" data-view-target="clipboard"><span aria-hidden="true">▤</span>剪切板</button>
+      <button class="nav-item" type="button" data-view-target="settings"><span aria-hidden="true">⚙</span>设置</button>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <section class="storage-card" aria-label="存储用量">
+      <span>存储</span>
+      <strong id="sidebarStats">正在读取</strong>
+    </section>
+  </aside>
+
+  <main class="app-main">
+    <header class="app-header">
+      <div><p class="eyebrow">MelodyShare</p><h1 id="viewTitle">文件</h1></div>
+      <div class="header-actions">
+        {{template "theme-control" .}}
+        <button type="button" class="button button-quiet" id="logoutBtn">退出</button>
+      </div>
+    </header>
+
+    <section class="app-view is-active" id="filesView" data-view="files">
+      <section class="upload-panel">
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择或拖入文件">
+          <input type="file" id="fileInput" multiple hidden>
+          <div class="upload-glyph" aria-hidden="true">↑</div>
+          <h2>拖入文件，或 <button type="button" class="inline-action" id="pickBtn">浏览选择</button></h2>
+          <p class="notice">支持多文件，也可以粘贴截图</p>
+        </div>
+        <div class="quick-options">
+          <label class="compact-field">有效期
+            <select id="expiry">
+              <option value="0" selected>永久</option><option value="3600">1 小时</option><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000">30 天</option>
+            </select>
+          </label>
+          <label class="compact-field">访问
+            <input type="text" id="uploadPassword" placeholder="公开" autocomplete="off">
+          </label>
+          <label class="compact-field">并发
+            <select id="concurrency">
+              <option value="auto" selected>自动</option><option value="1">1 线程</option><option value="3">3 线程</option><option value="5">5 线程</option><option value="8">8 线程</option>
+            </select>
+          </label>
+        </div>
+        <details class="advanced-options" id="advancedUploadOptions">
+          <summary>更多选项</summary>
+          <div class="advanced-grid">
+            <label class="field" id="storageLabel" hidden>存储位置
+              <select id="storage"><option value="local">本地磁盘</option><option value="r2">Cloudflare R2</option></select>
+            </label>
+            <label class="field">下载次数
+              <input type="number" id="maxDownloads" min="1" step="1" placeholder="不限">
+            </label>
+            <label class="field">自定义链接（仅单文件）
+              <input type="text" id="customSlug" placeholder="自动生成" autocomplete="off">
+            </label>
+          </div>
+        </details>
+      </section>
+
+      <section id="queue" class="upload-queue" aria-label="上传队列" aria-live="polite"></section>
+
+      <div class="section-heading file-heading">
+        <div><h2>最近文件</h2><p id="stats" class="notice"></p></div>
+      </div>
+      <div id="fileList" class="record-list" aria-live="polite"></div>
+      <p id="emptyHint" class="empty-state" hidden>还没有文件</p>
+    </section>
+
+    <section class="app-view" id="clipboardView" data-view="clipboard" hidden>
+      <div class="section-heading">
+        <div><h2>剪切板</h2><p class="notice">临时文本链接</p></div>
+        <a class="button button-primary" href="/p" target="_blank" rel="noopener">创建剪切板</a>
+      </div>
+      <div id="pasteList" class="record-list" aria-live="polite"></div>
+      <p id="pasteEmptyHint" class="empty-state" hidden>没有活跃内容</p>
+    </section>
+
+    <section class="app-view" id="settingsView" data-view="settings" hidden>
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="设置分类">
+          <a href="#settings-site">站点</a>
+          <a href="#settings-upload">上传</a>
+          <a href="#settings-clipboard">剪切板</a>
+          <a href="#settings-r2">Cloudflare R2</a>
+          <a href="#settings-account">账户</a>
+        </nav>
+        <div class="settings-content">
+          <section class="settings-section" id="settings-site">
+            <div class="settings-heading"><h2>站点</h2><p class="notice">名称与分享链接</p></div>
+            <label class="field">站点名称<input type="text" id="setSiteName" maxlength="64"></label>
+            <label class="field">分享链接前缀<input type="text" id="setBaseURL" placeholder="按当前地址推断"></label>
+          </section>
+          <section class="settings-section" id="settings-upload">
+            <div class="settings-heading"><h2>上传</h2><p class="notice">分片方式</p></div>
+            <label class="field">分片大小
+              <select id="setChunkMode"><option value="auto">自动</option><option value="manual">手动</option></select>
+            </label>
+            <label class="field" id="chunkSizeRow" hidden>大小（MB，5–95）<input type="number" id="setChunkSize" min="5" max="95" step="1"></label>
+          </section>
+          <section class="settings-section" id="settings-clipboard">
+            <div class="settings-heading"><h2>剪切板</h2><p class="notice">公开临时文本</p></div>
+            <label class="check-field"><input type="checkbox" id="setPasteEnabled"><span>启用剪切板</span></label>
+            <label class="field">单条上限（KB）<input type="number" id="setPasteMaxKB" min="1" max="10240" step="1"></label>
+          </section>
+          <section class="settings-section" id="settings-r2">
+            <div class="settings-heading"><h2>Cloudflare R2</h2><p class="notice">全部留空即停用</p></div>
+            <div class="settings-grid">
+              <label class="field">Endpoint<input type="text" id="setR2Endpoint" placeholder="accountid.r2.cloudflarestorage.com"></label>
+              <label class="field">Bucket<input type="text" id="setR2Bucket"></label>
+              <label class="field">Access Key<input type="text" id="setR2AccessKey" autocomplete="off"></label>
+              <label class="field">Secret Key<input type="password" id="setR2SecretKey" autocomplete="off"></label>
+            </div>
+            <button type="button" class="button button-quiet" id="r2TestBtn">测试连接</button>
+          </section>
+          <div class="settings-savebar"><button type="button" class="button button-primary" id="settingsSave">保存站点设置</button></div>
+          <section class="settings-section" id="settings-account">
+            <div class="settings-heading"><h2>账户</h2><p class="notice">修改时需要当前密码</p></div>
+            <label class="field">用户名<input type="text" id="setUsername" autocomplete="off"></label>
+            <label class="field">新密码<input type="password" id="setNewPassword" autocomplete="new-password" placeholder="至少 8 位，留空不修改"></label>
+            <label class="field">当前密码<input type="password" id="setCurrentPassword" autocomplete="current-password"></label>
+            <button type="button" class="button button-primary" id="accountSave">更新账户</button>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<nav class="mobile-nav" aria-label="主导航">
+  <button class="is-active" type="button" data-view-target="files" aria-current="page">文件</button>
+  <button type="button" data-view-target="clipboard">剪切板</button>
+  <button type="button" data-view-target="settings">设置</button>
+</nav>
+
+<dialog id="editDialog" aria-labelledby="editDialogTitle">
+  <form method="dialog" id="editForm">
+    <h2 id="editDialogTitle">修改分享设置</h2>
+    <label class="field">过期时间（从现在起）
+      <select id="editExpiry"><option value="">保持不变</option><option value="0">永不过期</option><option value="3600">1 小时</option><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000">30 天</option></select>
+    </label>
+    <label class="field">下载密码<input type="text" id="editPassword" placeholder="留空保持不变" autocomplete="off"></label>
+    <label class="checkline"><input type="checkbox" id="editClearPassword"> 移除现有密码</label>
+    <label class="field">下载次数上限<input type="number" id="editMaxDownloads" min="0" step="1" placeholder="留空保持不变，0 为不限"></label>
+    <div class="dialog-actions">
+      <button type="button" class="button button-quiet" id="editCancel">取消</button>
+      <button type="submit" class="button button-primary" id="editSave">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} · {{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/public.css">
+</head>
+<body class="public-page">
+<header class="public-toolbar">
+  {{template "brand-lockup" .}}
+  {{template "theme-control" .}}
+</header>
+<main class="focus-card preview-shell">
+  <div class="content-heading">
+    <div>
+      <h1 class="file-name">{{.Name}}</h1>
+      <p class="notice">{{.Size}} · {{.Created}}</p>
+    </div>
+    <a class="button button-primary" href="{{.DlURL}}" download>下载</a>
+  </div>
+  <section class="preview-stage" aria-label="文件预览">
+    {{if eq .Kind "image"}}<img class="preview-media" src="{{.RawURL}}" alt="{{.Name}}">
+    {{else if eq .Kind "video"}}<video class="preview-media" src="{{.RawURL}}" controls preload="metadata"></video>
+    {{else if eq .Kind "audio"}}<audio class="preview-audio" src="{{.RawURL}}" controls preload="metadata"></audio>
+    {{else if eq .Kind "pdf"}}<iframe class="preview-frame" src="{{.RawURL}}" title="{{.Name}}"></iframe>
+    {{else if eq .Kind "text"}}<pre id="textPreview" class="preview-text" data-src="{{.RawURL}}" aria-live="polite">正在加载预览</pre>
+    {{else}}<div class="empty-preview"><span aria-hidden="true">↓</span><p>此文件不支持在线预览</p></div>
+    {{end}}
+  </section>
+  {{if .Note}}<p class="notice preview-note">{{.Note}}</p>{{end}}
+  {{if .Remaining}}<p class="notice preview-note">剩余 {{.Remaining}} 次下载</p>{{end}}
+</main>
+{{if eq .Kind "text"}}<script src="/static/preview.js"></script>{{end}}
+</body>
+</html>

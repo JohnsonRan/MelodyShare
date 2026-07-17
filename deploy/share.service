@@ -1,0 +1,42 @@
+# systemd unit for MelodyShare
+#
+# 安装：
+#   sudo useradd --system --home /opt/share --shell /usr/sbin/nologin share
+#   sudo mkdir -p /opt/share/data && sudo chown -R share:share /opt/share
+#   sudo cp share /opt/share/share
+#   sudo tee /opt/share/share.env >/dev/null <<'EOF'
+#   SHARE_PASSWORD=change-me
+#   SHARE_BASE_URL=https://share.example.com
+#   EOF
+#   sudo chmod 600 /opt/share/share.env && sudo chown share:share /opt/share/share.env
+#   sudo cp deploy/share.service /etc/systemd/system/
+#   sudo systemctl enable --now share
+
+[Unit]
+Description=MelodyShare file sharing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=share
+Group=share
+WorkingDirectory=/opt/share
+ExecStart=/opt/share/share
+EnvironmentFile=/opt/share/share.env
+Environment=SHARE_ADDR=127.0.0.1:8080
+Environment=SHARE_DATA_DIR=/opt/share/data
+Restart=on-failure
+RestartSec=3
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/share/data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

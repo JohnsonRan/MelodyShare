@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">传输</title>
+  <rect x="3" y="3" width="42" height="42" rx="14" fill="#1f6e50"/>
+  <path d="M15 28.5c0-4.4 3.6-8 8-8h10" fill="none" stroke="#f8fbf5" stroke-width="3.2" stroke-linecap="round"/>
+  <path d="m28 15 6 5.5-6 5.5" fill="none" stroke="#f8fbf5" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="16" cy="31" r="4" fill="#bfe0ce"/>
+</svg>

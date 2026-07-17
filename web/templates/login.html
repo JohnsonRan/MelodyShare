@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · {{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/public.css">
+</head>
+<body class="public-page">
+<header class="public-toolbar">
+  {{template "brand-lockup" .}}
+  {{template "theme-control" .}}
+</header>
+<main class="focus-card auth-card">
+  <p class="eyebrow">管理入口</p>
+  <h1>欢迎回来</h1>
+  <form id="loginForm" class="stack-form">
+    <label class="field">用户名
+      <input type="text" id="username" autocomplete="username" required autofocus>
+    </label>
+    <label class="field">密码
+      <input type="password" id="password" autocomplete="current-password" required>
+    </label>
+    <p id="error" class="notice notice-error" role="alert" hidden></p>
+    <button type="submit" class="button button-primary button-wide" id="submitBtn">登录</button>
+  </form>
+</main>
+<script src="/static/login.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} · {{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/public.css">
+</head>
+<body class="public-page">
+<header class="public-toolbar">
+  {{template "brand-lockup" .}}
+  {{template "theme-control" .}}
+</header>
+<main class="focus-card auth-card">
+  <div class="file-glyph" aria-hidden="true">↓</div>
+  <p class="file-name">{{.Name}}</p>
+  <p class="notice">{{.Size}}</p>
+  <form method="post" action="/f/{{.Slug}}" class="stack-form">
+    <label class="field">下载密码
+      <input type="password" name="password" autocomplete="current-password" required autofocus>
+    </label>
+    {{if .Error}}<p class="notice notice-error" role="alert">{{.Error}}</p>{{end}}
+    <button type="submit" class="button button-primary button-wide">继续下载</button>
+  </form>
+</main>
+</body>
+</html>

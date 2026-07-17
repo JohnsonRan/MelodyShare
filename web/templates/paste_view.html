@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>剪切板 · {{.Site}}</title>
+{{template "head-assets" .}}
+<link rel="stylesheet" href="/static/public.css">
+</head>
+<body class="public-page">
+<header class="public-toolbar">
+  {{template "brand-lockup" .}}
+  {{template "theme-control" .}}
+</header>
+<main class="focus-card paste-card paste-view-card">
+  <div class="content-heading">
+    <div>
+      <p class="eyebrow">临时文本</p>
+      <h1>剪切板</h1>
+    </div>
+    <p class="notice">{{.Expires}} 过期</p>
+  </div>
+  <pre id="pasteContent" class="paste-content" tabindex="0">{{.Content}}</pre>
+  <div class="action-row">
+    <button type="button" class="button button-primary" id="copyBtn">复制内容</button>
+    <a class="button button-quiet" href="{{.RawURL}}">原始文本</a>
+  </div>
+</main>
+<script src="/static/paste_view.js"></script>
+</body>
+</html>
