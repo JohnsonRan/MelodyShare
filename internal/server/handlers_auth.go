@@ -36,7 +36,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   r.Header.Get("X-Forwarded-Proto") == "https" || r.TLS != nil,
 	})
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +44,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.auth.Logout(c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

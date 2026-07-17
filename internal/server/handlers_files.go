@@ -3,10 +3,8 @@ package server
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"melodyshare/internal/storage"
 	"melodyshare/internal/store"
 )
@@ -29,9 +27,8 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getFile(w http.ResponseWriter, r *http.Request) *store.File {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid file id")
+	id, ok := pathInt64(w, r, "file id")
+	if !ok {
 		return nil
 	}
 	f, err := s.st.GetFileByID(id)
@@ -80,16 +77,12 @@ func (s *Server) handleFileUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Password != nil {
-		if *req.Password == "" {
-			f.PasswordHash = ""
-		} else {
-			h, err := bcrypt.GenerateFromPassword([]byte(*req.Password), bcrypt.DefaultCost)
-			if err != nil {
-				jsonError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			f.PasswordHash = string(h)
+		h, err := hashPassword(*req.Password)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
+		f.PasswordHash = h
 	}
 	if err := s.st.UpdateFile(f.ID, f.ExpiresAt, f.PasswordHash, f.MaxDownloads); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -107,8 +100,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	free := int64(-1)
-	if l, ok := s.local.(*storage.Local); ok {
-		if f, err := l.FreeSpace(); err == nil {
+	if sc, ok := s.local.(storage.SpaceChecker); ok {
+		if f, err := sc.FreeSpace(); err == nil {
 			free = f
 		}
 	}
@@ -132,5 +125,5 @@ func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }

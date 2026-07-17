@@ -137,15 +137,34 @@ func (s *Store) Close() error { return s.db.Close() }
 
 const slugChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-func NewSlug() string {
-	b := make([]byte, 8)
+func NewSlug() string { return randomString(8, slugChars) }
+
+// randomString returns n characters drawn from alphabet using crypto/rand.
+func randomString(n int, alphabet string) string {
+	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		panic(err)
 	}
 	for i := range b {
-		b[i] = slugChars[int(b[i])%len(slugChars)]
+		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
 	return string(b)
+}
+
+// scanAll iterates rows, applying scan to each, and returns the collected
+// slice. rows are always closed. scan is one of the scanX helpers, which also
+// work over a single *sql.Row.
+func scanAll[T any](rows *sql.Rows, scan func(interface{ Scan(...any) error }) (T, error)) ([]T, error) {
+	defer rows.Close()
+	out := []T{}
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // --- files ---
@@ -191,16 +210,7 @@ func (s *Store) ListFiles() ([]*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	files := []*File{}
-	for rows.Next() {
-		f, err := scanFile(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, f)
-	}
-	return files, rows.Err()
+	return scanAll(rows, scanFile)
 }
 
 func (s *Store) ListExpiredFiles(now int64) ([]*File, error) {
@@ -208,16 +218,7 @@ func (s *Store) ListExpiredFiles(now int64) ([]*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	files := []*File{}
-	for rows.Next() {
-		f, err := scanFile(rows)
-		if err != nil {
-			return nil, err
-		}
-		files = append(files, f)
-	}
-	return files, rows.Err()
+	return scanAll(rows, scanFile)
 }
 
 func (s *Store) UpdateFile(id int64, expiresAt int64, passwordHash string, maxDownloads int64) error {
@@ -339,12 +340,11 @@ func (s *Store) CreateUpload(u *Upload) error {
 	return err
 }
 
-func (s *Store) GetUpload(id string) (*Upload, error) {
+const uploadCols = `id, slug, name, size, chunk_size, total_chunks, storage, provider_id, password_hash, expires_in, max_downloads, created_at`
+
+func scanUpload(row interface{ Scan(...any) error }) (*Upload, error) {
 	var u Upload
-	err := s.db.QueryRow(
-		`SELECT id, slug, name, size, chunk_size, total_chunks, storage, provider_id, password_hash, expires_in, max_downloads, created_at
-		 FROM uploads WHERE id = ?`, id).
-		Scan(&u.ID, &u.Slug, &u.Name, &u.Size, &u.ChunkSize, &u.TotalChunks, &u.Storage, &u.ProviderID, &u.PasswordHash, &u.ExpiresIn, &u.MaxDownloads, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Slug, &u.Name, &u.Size, &u.ChunkSize, &u.TotalChunks, &u.Storage, &u.ProviderID, &u.PasswordHash, &u.ExpiresIn, &u.MaxDownloads, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -354,24 +354,17 @@ func (s *Store) GetUpload(id string) (*Upload, error) {
 	return &u, nil
 }
 
+func (s *Store) GetUpload(id string) (*Upload, error) {
+	return scanUpload(s.db.QueryRow(`SELECT `+uploadCols+` FROM uploads WHERE id = ?`, id))
+}
+
 func (s *Store) ListStaleUploads(olderThan time.Duration) ([]*Upload, error) {
 	cutoff := time.Now().Add(-olderThan).Unix()
-	rows, err := s.db.Query(
-		`SELECT id, slug, name, size, chunk_size, total_chunks, storage, provider_id, password_hash, expires_in, max_downloads, created_at
-		 FROM uploads WHERE created_at < ?`, cutoff)
+	rows, err := s.db.Query(`SELECT `+uploadCols+` FROM uploads WHERE created_at < ?`, cutoff)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var ups []*Upload
-	for rows.Next() {
-		var u Upload
-		if err := rows.Scan(&u.ID, &u.Slug, &u.Name, &u.Size, &u.ChunkSize, &u.TotalChunks, &u.Storage, &u.ProviderID, &u.PasswordHash, &u.ExpiresIn, &u.MaxDownloads, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		ups = append(ups, &u)
-	}
-	return ups, rows.Err()
+	return scanAll(rows, scanUpload)
 }
 
 func (s *Store) DeleteUpload(id string) error {
@@ -389,19 +382,16 @@ func (s *Store) PutPart(uploadID string, idx int, etag string) error {
 	return err
 }
 
+func scanPart(row interface{ Scan(...any) error }) (Part, error) {
+	var p Part
+	err := row.Scan(&p.Idx, &p.ETag)
+	return p, err
+}
+
 func (s *Store) ListParts(uploadID string) ([]Part, error) {
 	rows, err := s.db.Query(`SELECT idx, etag FROM upload_parts WHERE upload_id = ? ORDER BY idx`, uploadID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	parts := []Part{}
-	for rows.Next() {
-		var p Part
-		if err := rows.Scan(&p.Idx, &p.ETag); err != nil {
-			return nil, err
-		}
-		parts = append(parts, p)
-	}
-	return parts, rows.Err()
+	return scanAll(rows, scanPart)
 }

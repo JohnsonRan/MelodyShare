@@ -53,7 +53,7 @@ func loadRuntimeSettings(cfg *config.Config, st *store.Store, r2Override storage
 	}
 	if v := db["chunk_size_mb"]; v != "" {
 		mb, err := strconv.Atoi(v)
-		if err != nil || (mb != 0 && (mb < 5 || mb > 95)) { // 0 = auto
+		if err != nil || (mb != 0 && (mb < minChunkMB || mb > maxChunkMB)) { // 0 = auto
 			return nil, fmt.Errorf("saved chunk_size_mb invalid: %q", v)
 		}
 		rt.chunkSize = int64(mb) * 1024 * 1024

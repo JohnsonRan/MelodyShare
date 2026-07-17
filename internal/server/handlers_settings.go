@@ -2,12 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"melodyshare/internal/config"
 	"melodyshare/internal/storage"
 )
@@ -30,6 +31,34 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		"r2":           r2,
 		"username":     s.auth.Username(),
 	})
+}
+
+// resolveR2 validates the R2 form fields (trimming them), falls back to the
+// stored secret when the submitted one is blank, and builds a client. It is
+// shared by the save and test-connection handlers; the caller decides whether
+// R2 is required or optional.
+func (s *Server) resolveR2(endpoint, accessKey, secretKey, bucket string) (*config.R2, *storage.R2, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	accessKey = strings.TrimSpace(accessKey)
+	secretKey = strings.TrimSpace(secretKey)
+	bucket = strings.TrimSpace(bucket)
+	if endpoint == "" || accessKey == "" || bucket == "" {
+		return nil, nil, errors.New("Endpoint、Access Key、Bucket 都需要填写")
+	}
+	if secretKey == "" {
+		if cur := s.rt.R2Config(); cur != nil {
+			secretKey = cur.SecretKey
+		}
+	}
+	if secretKey == "" {
+		return nil, nil, errors.New("缺少 R2 Secret Key")
+	}
+	cfg := &config.R2{Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey, Bucket: bucket}
+	client, err := storage.NewR2(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey, cfg.Bucket)
+	if err != nil {
+		return nil, nil, fmt.Errorf("R2 配置无效：%w", err)
+	}
+	return cfg, client, nil
 }
 
 func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +91,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "Base URL 需以 http:// 或 https:// 开头")
 		return
 	}
-	if req.ChunkSizeMB != 0 && (req.ChunkSizeMB < 5 || req.ChunkSizeMB > 95) { // 0 = 自动
+	if req.ChunkSizeMB != 0 && (req.ChunkSizeMB < minChunkMB || req.ChunkSizeMB > maxChunkMB) { // 0 = 自动
 		jsonError(w, http.StatusBadRequest, "分片大小需为自动或 5–95 MB 之间")
 		return
 	}
@@ -77,32 +106,13 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	// R2 is configured as a unit: all fields empty disables it.
 	var r2cfg *config.R2
 	var r2client storage.Storage
-	anyR2 := req.R2Endpoint != "" || req.R2AccessKey != "" || req.R2SecretKey != "" || req.R2Bucket != ""
-	if anyR2 {
-		if req.R2Endpoint == "" || req.R2AccessKey == "" || req.R2Bucket == "" {
-			jsonError(w, http.StatusBadRequest, "R2 配置不完整：Endpoint、Access Key、Bucket 都需要填写")
-			return
-		}
-		secret := req.R2SecretKey
-		if secret == "" {
-			if cur := s.rt.R2Config(); cur != nil {
-				secret = cur.SecretKey
-			}
-		}
-		if secret == "" {
-			jsonError(w, http.StatusBadRequest, "缺少 R2 Secret Key")
-			return
-		}
-		r2cfg = &config.R2{
-			Endpoint: req.R2Endpoint, AccessKey: req.R2AccessKey,
-			SecretKey: secret, Bucket: req.R2Bucket,
-		}
-		client, err := storage.NewR2(r2cfg.Endpoint, r2cfg.AccessKey, r2cfg.SecretKey, r2cfg.Bucket)
+	if req.R2Endpoint != "" || req.R2AccessKey != "" || req.R2SecretKey != "" || req.R2Bucket != "" {
+		cfg, client, err := s.resolveR2(req.R2Endpoint, req.R2AccessKey, req.R2SecretKey, req.R2Bucket)
 		if err != nil {
-			jsonError(w, http.StatusBadRequest, "R2 配置无效："+err.Error())
+			jsonError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		r2client = client
+		r2cfg, r2client = cfg, client
 	}
 
 	kv := map[string]string{
@@ -128,7 +138,7 @@ func (s *Server) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.rt.Apply(req.SiteName, req.BaseURL, req.ChunkSizeMB*1024*1024, req.PasteEnabled, req.PasteMaxKB*1024, r2cfg, r2client)
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 // handleR2Test verifies R2 credentials from the settings form by checking the
@@ -143,26 +153,9 @@ func (s *Server) handleR2Test(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	req.R2Endpoint = strings.TrimSpace(req.R2Endpoint)
-	req.R2AccessKey = strings.TrimSpace(req.R2AccessKey)
-	req.R2SecretKey = strings.TrimSpace(req.R2SecretKey)
-	req.R2Bucket = strings.TrimSpace(req.R2Bucket)
-	if req.R2Endpoint == "" || req.R2AccessKey == "" || req.R2Bucket == "" {
-		jsonError(w, http.StatusBadRequest, "Endpoint、Access Key、Bucket 都需要填写")
-		return
-	}
-	if req.R2SecretKey == "" {
-		if cur := s.rt.R2Config(); cur != nil {
-			req.R2SecretKey = cur.SecretKey
-		}
-	}
-	if req.R2SecretKey == "" {
-		jsonError(w, http.StatusBadRequest, "缺少 Secret Key")
-		return
-	}
-	client, err := storage.NewR2(req.R2Endpoint, req.R2AccessKey, req.R2SecretKey, req.R2Bucket)
+	_, client, err := s.resolveR2(req.R2Endpoint, req.R2AccessKey, req.R2SecretKey, req.R2Bucket)
 	if err != nil {
-		jsonError(w, http.StatusBadRequest, "配置无效："+err.Error())
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -171,7 +164,7 @@ func (s *Server) handleR2Test(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "连接失败："+err.Error())
 		return
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
@@ -198,14 +191,12 @@ func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	kv := map[string]string{"username": req.Username}
-	hash := ""
-	if req.NewPassword != "" {
-		h, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		hash = string(h)
+	hash, err := hashPassword(req.NewPassword)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if hash != "" {
 		kv["password_hash"] = hash
 	}
 	if err := s.st.SetSettings(kv); err != nil {
@@ -218,5 +209,5 @@ func (s *Server) handleAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.auth.UpdateCredentials(req.Username, hash)
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }

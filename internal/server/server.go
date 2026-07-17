@@ -6,9 +6,11 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"melodyshare/internal/auth"
 	"melodyshare/internal/config"
 	"melodyshare/internal/storage"
@@ -183,6 +185,32 @@ func jsonWrite(w http.ResponseWriter, status int, v any) {
 
 func jsonError(w http.ResponseWriter, status int, msg string) {
 	jsonWrite(w, status, map[string]string{"error": msg})
+}
+
+// jsonOK writes the standard {"ok": true} success envelope.
+func jsonOK(w http.ResponseWriter) {
+	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// pathInt64 parses an int64 {id} path segment, writing a 400 ("invalid
+// <label>") on failure and reporting whether it succeeded.
+func pathInt64(w http.ResponseWriter, r *http.Request, label string) (int64, bool) {
+	v, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid "+label)
+		return 0, false
+	}
+	return v, true
+}
+
+// hashPassword bcrypt-hashes a plaintext password; an empty password yields an
+// empty hash, meaning "no password".
+func hashPassword(plain string) (string, error) {
+	if plain == "" {
+		return "", nil
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	return string(h), err
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {

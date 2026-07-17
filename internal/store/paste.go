@@ -1,7 +1,6 @@
 package store
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"errors"
 )
@@ -20,16 +19,7 @@ type Paste struct {
 // the alphabet is lowercase-only and drops lookalikes (0/o, 1/l/i).
 const pasteSlugChars = "abcdefghjkmnpqrstuvwxyz23456789"
 
-func NewPasteSlug() string {
-	b := make([]byte, 5)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	for i := range b {
-		b[i] = pasteSlugChars[int(b[i])%len(pasteSlugChars)]
-	}
-	return string(b)
-}
+func NewPasteSlug() string { return randomString(5, pasteSlugChars) }
 
 func (s *Store) CreatePaste(p *Paste) error {
 	res, err := s.db.Exec(
@@ -69,16 +59,7 @@ func (s *Store) ListPastes() ([]*Paste, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	pastes := []*Paste{}
-	for rows.Next() {
-		p, err := scanPaste(rows)
-		if err != nil {
-			return nil, err
-		}
-		pastes = append(pastes, p)
-	}
-	return pastes, rows.Err()
+	return scanAll(rows, scanPaste)
 }
 
 func (s *Store) DeletePaste(id int64) error {

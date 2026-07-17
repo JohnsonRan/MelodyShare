@@ -125,7 +125,8 @@ async function uploadFile(file, opts, onProgress, onStatus) {
     const chunkBytes = (idx) => Math.min((idx + 1) * chunkSize, file.size) - idx * chunkSize;
     const loaded = new Array(totalChunks).fill(0);
     for (const idx of received) loaded[idx] = chunkBytes(idx);
-    const report = (th) => onProgress(loaded.reduce((a, b) => a + b, 0) / file.size, th);
+    const totalLoaded = () => loaded.reduce((a, b) => a + b, 0);
+    const report = (th) => onProgress(totalLoaded() / file.size, th);
     report();
 
     // R2 uploads go browser→R2 directly; fall back to relaying through the
@@ -158,18 +159,15 @@ async function uploadFile(file, opts, onProgress, onStatus) {
     let target = auto ? 3 : Math.min(netSlots.max, Math.max(1, manual));
     let onChunkError = () => {};
 
-    const totalLoaded = () => loaded.reduce((a, b) => a + b, 0);
-    const threads = () => target;
-
     async function uploadOne(idx) {
       const blob = file.slice(idx * chunkSize, Math.min((idx + 1) * chunkSize, file.size));
       let lastErr = null;
       for (let attempt = 0; attempt < CHUNK_RETRIES; attempt++) {
         await netSlots.acquire();
         try {
-          await sendChunk(idx, blob, (n) => { loaded[idx] = n; report(threads()); });
+          await sendChunk(idx, blob, (n) => { loaded[idx] = n; report(target); });
           loaded[idx] = blob.size;
-          report(threads());
+          report(target);
           return;
         } catch (err) {
           lastErr = err;
@@ -331,7 +329,7 @@ function startUpload(file, opts) {
     openLink.rel = 'noopener';
     openLink.textContent = '打开';
     linkEl.append(code, copyBtn, openLink);
-    refreshFiles();
+    scheduleFilesRefresh();
   }).catch((err) => {
     settled = true;
     statusEl.textContent = `上传失败：${err.message}`;
@@ -353,6 +351,14 @@ async function refreshFiles() {
   $('emptyHint').hidden = data.files.length > 0;
   for (const f of data.files) tbody.append(fileRow(f));
   refreshStats().catch(() => {});
+}
+
+let filesRefreshTimer = null;
+// Coalesce list refreshes: a batch of uploads finishing together triggers one
+// /api/files + /api/stats round trip instead of one per completion.
+function scheduleFilesRefresh() {
+  clearTimeout(filesRefreshTimer);
+  filesRefreshTimer = setTimeout(() => refreshFiles().catch(() => {}), 300);
 }
 
 async function refreshStats() {
@@ -780,8 +786,12 @@ $('concurrency').addEventListener('change', () =>
   localStorage.setItem('share-concurrency', $('concurrency').value));
 
 (async () => {
-  config = await api('GET', '/api/config');
+  // config, files and pastes are independent — fetch them in parallel.
+  const [cfg] = await Promise.all([
+    api('GET', '/api/config'),
+    refreshFiles(),
+    refreshPastes(),
+  ]);
+  config = cfg;
   $('storageLabel').hidden = !config.r2Enabled;
-  await refreshFiles();
-  await refreshPastes();
 })().catch((err) => toast(err.message));

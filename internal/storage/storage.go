@@ -25,6 +25,13 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// SpaceChecker is implemented by backends that can report free capacity, so
+// callers can refuse an upload that would not fit before starting it.
+type SpaceChecker interface {
+	// FreeSpace returns the bytes available to store new files.
+	FreeSpace() (int64, error)
+}
+
 // Presigner is implemented by backends that let browsers transfer bytes
 // directly (bypassing this server) via presigned URLs.
 type Presigner interface {

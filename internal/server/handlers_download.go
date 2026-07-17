@@ -77,31 +77,26 @@ const (
 	maxPDFPreview   = 50 << 20 // built-in PDF viewers often fetch everything
 )
 
-// previewKind classifies what the preview page can render inline; oversized
-// image/PDF files are demoted to "none".
-func previewKind(ct string, size int64) string {
+// previewKind classifies what the preview page can render inline for a content
+// type. oversized reports that an otherwise-previewable image/PDF exceeds the
+// inline size cap and should be demoted to a plain download.
+func previewKind(ct string, size int64) (kind string, oversized bool) {
 	switch {
 	case strings.HasPrefix(ct, "image/"):
-		if size > maxImagePreview {
-			return "none"
-		}
-		return "image"
+		return "image", size > maxImagePreview
 	case strings.HasPrefix(ct, "video/"):
-		return "video"
+		return "video", false
 	case strings.HasPrefix(ct, "audio/"):
-		return "audio"
+		return "audio", false
 	case ct == "application/pdf":
-		if size > maxPDFPreview {
-			return "none"
-		}
-		return "pdf"
+		return "pdf", size > maxPDFPreview
 	case strings.HasPrefix(ct, "text/"),
 		ct == "application/json",
 		ct == "application/xml",
 		ct == "application/javascript":
-		return "text"
+		return "text", false
 	}
-	return "none"
+	return "none", false
 }
 
 func (s *Server) renderPreview(w http.ResponseWriter, f *store.File, token string) {
@@ -109,14 +104,17 @@ func (s *Server) renderPreview(w http.ResponseWriter, f *store.File, token strin
 	if token != "" {
 		q = "?t=" + url.QueryEscape(token)
 	}
-	kind := previewKind(f.ContentType, f.Size)
+	kind, oversized := previewKind(f.ContentType, f.Size)
+	if oversized {
+		kind = "none"
+	}
 	note := ""
 	switch {
 	case f.MaxDownloads > 0 && kind != "none":
 		// inline previews would bypass the download counter
 		kind = "none"
 		note = "该文件设有下载次数限制，已禁用在线预览"
-	case kind == "none" && previewKind(f.ContentType, 0) != "none":
+	case oversized:
 		note = "文件过大，已禁用在线预览，请直接下载"
 	}
 	data := map[string]any{

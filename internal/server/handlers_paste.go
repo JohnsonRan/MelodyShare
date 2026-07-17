@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -234,9 +233,8 @@ func pastePreview(content string) string {
 }
 
 func (s *Server) handlePasteDelete(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid paste id")
+	id, ok := pathInt64(w, r, "paste id")
+	if !ok {
 		return
 	}
 	if _, err := s.st.GetPasteByID(id); errors.Is(err, store.ErrNotFound) {
@@ -250,5 +248,5 @@ func (s *Server) handlePasteDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }

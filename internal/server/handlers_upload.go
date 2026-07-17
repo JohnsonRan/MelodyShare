@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"melodyshare/internal/storage"
 	"melodyshare/internal/store"
 )
@@ -24,8 +23,13 @@ const (
 	diskFreeMargin  = 1 << 30              // keep at least 1 GiB free on disk
 	maxMaxDownloads = 1_000_000_000
 
-	minChunkSize    = 5 << 20  // S3/R2 multipart lower bound
-	maxChunkSize    = 95 << 20 // stay under Cloudflare's 100 MB request limit
+	// Chunk-size bounds: S3/R2's multipart floor and Cloudflare's 100 MB
+	// request ceiling. The MB values are the single source of truth — settings
+	// validation and the byte sizes below both derive from them.
+	minChunkMB      = 5
+	maxChunkMB      = 95
+	minChunkSize    = minChunkMB << 20
+	maxChunkSize    = maxChunkMB << 20
 	autoTargetParts = 64
 )
 
@@ -93,26 +97,20 @@ func (s *Server) handleUploadInit(w http.ResponseWriter, r *http.Request) {
 		slug = store.NewSlug()
 	}
 
-	// Refuse local uploads that would (nearly) fill the disk instead of
-	// failing halfway through a chunk write.
-	if req.Storage == "local" {
-		if l, ok := backend.(*storage.Local); ok {
-			if free, err := l.FreeSpace(); err == nil && free < req.Size+diskFreeMargin {
-				jsonError(w, http.StatusInsufficientStorage,
-					fmt.Sprintf("磁盘空间不足：剩余 %.1f GB，需要 %.1f GB", float64(free)/(1<<30), float64(req.Size+diskFreeMargin)/(1<<30)))
-				return
-			}
+	// Refuse uploads that would (nearly) fill a space-limited backend instead
+	// of failing halfway through a chunk write.
+	if sc, ok := backend.(storage.SpaceChecker); ok {
+		if free, err := sc.FreeSpace(); err == nil && free < req.Size+diskFreeMargin {
+			jsonError(w, http.StatusInsufficientStorage,
+				fmt.Sprintf("磁盘空间不足：剩余 %.1f GB，需要 %.1f GB", float64(free)/(1<<30), float64(req.Size+diskFreeMargin)/(1<<30)))
+			return
 		}
 	}
 
-	passwordHash := ""
-	if req.Password != "" {
-		h, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-		if err != nil {
-			jsonError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		passwordHash = string(h)
+	passwordHash, err := hashPassword(req.Password)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	chunkSize := s.rt.ChunkSize()
@@ -251,7 +249,7 @@ func (s *Server) handleChunkETag(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +280,7 @@ func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
@@ -357,7 +355,7 @@ func (s *Server) handleUploadAbort(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	jsonWrite(w, http.StatusOK, map[string]bool{"ok": true})
+	jsonOK(w)
 }
 
 func newUploadID() string {
