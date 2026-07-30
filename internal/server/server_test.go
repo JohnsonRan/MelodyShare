@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -376,6 +377,52 @@ func TestExpiredFileGone(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusGone {
 		t.Fatalf("expected 410, got %d", res.StatusCode)
+	}
+}
+
+func TestBatchDeleteFiles(t *testing.T) {
+	e := newEnv(t)
+	first := e.upload(t, "first.txt", randomContent(100), "", 0)
+	second := e.upload(t, "second.txt", randomContent(200), "", 0)
+
+	list := decode[struct {
+		Files []struct {
+			ID   int64  `json:"id"`
+			Slug string `json:"slug"`
+		} `json:"files"`
+	}](t, e.doJSON(t, e.client, "GET", "/api/files", nil))
+	if len(list.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(list.Files))
+	}
+
+	res := e.doJSON(t, e.client, "POST", "/api/files/batch-delete", map[string]any{
+		"ids": []int64{list.Files[0].ID, list.Files[1].ID},
+	})
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("batch delete: %d %s", res.StatusCode, body)
+	}
+	result := decode[struct {
+		Deleted []int64 `json:"deleted"`
+		Failed  []struct {
+			ID    int64  `json:"id"`
+			Error string `json:"error"`
+		} `json:"failed"`
+	}](t, res)
+	if len(result.Deleted) != 2 || len(result.Failed) != 0 {
+		t.Fatalf("unexpected batch result: deleted=%v failed=%v", result.Deleted, result.Failed)
+	}
+
+	for _, f := range list.Files {
+		if _, err := e.st.GetFileByID(f.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("file %d remains in database: %v", f.ID, err)
+		}
+	}
+	for _, slug := range []string{first.Slug, second.Slug} {
+		if _, err := os.Stat(filepath.Join(e.dataDir, "files", slug)); !os.IsNotExist(err) {
+			t.Errorf("file %q remains on disk: %v", slug, err)
+		}
 	}
 }
 
@@ -933,5 +980,144 @@ func TestUpdateFileExpiryAndPassword(t *testing.T) {
 	}
 	if f.ExpiresAt == 0 || !f.HasPassword {
 		t.Fatalf("update not applied: expiresAt=%d hasPassword=%v", f.ExpiresAt, f.HasPassword)
+	}
+}
+
+func TestHealthz(t *testing.T) {
+	e := newEnv(t)
+	res, err := e.anon.Get(e.ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if string(body) != "ok\n" {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestCleanupRemovesExhaustedFiles(t *testing.T) {
+	e := newEnv(t)
+	content := randomContent(32)
+	res := e.doJSON(t, e.client, "POST", "/api/uploads", map[string]any{
+		"name": "once.bin", "size": len(content), "storage": "local", "maxDownloads": 1,
+	})
+	ir := decode[initResp](t, res)
+	req, _ := http.NewRequest("PUT",
+		fmt.Sprintf("%s/api/uploads/%s/chunks/0", e.ts.URL, ir.ID), bytes.NewReader(content))
+	r1, err := e.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1.Body.Close()
+	res = e.doJSON(t, e.client, "POST", "/api/uploads/"+ir.ID+"/complete", nil)
+	res.Body.Close()
+
+	dl, err := e.anon.Get(e.ts.URL + "/f/" + ir.Slug + "/dl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, dl.Body)
+	dl.Body.Close()
+	if dl.StatusCode != http.StatusOK {
+		t.Fatalf("download: %d", dl.StatusCode)
+	}
+
+	if err := e.srv.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.GetFileBySlug(ir.Slug); err != store.ErrNotFound {
+		t.Fatalf("exhausted file still in DB: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.dataDir, "files", ir.Slug)); !os.IsNotExist(err) {
+		t.Fatalf("exhausted object still on disk: %v", err)
+	}
+}
+
+func TestCleanupRemovesLocalOrphans(t *testing.T) {
+	e := newEnv(t)
+	orphan := filepath.Join(e.dataDir, "files", "orphan-key")
+	if err := os.WriteFile(orphan, []byte("lost"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.srv.Cleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("orphan still present: %v", err)
+	}
+}
+
+func TestDownloadPasswordRateLimit(t *testing.T) {
+	e := newEnv(t)
+	content := randomContent(16)
+	ir := e.upload(t, "secret.txt", content, "s3cret", 0)
+
+	// Exhaust the per-IP limiter with wrong passwords (limit is 20/hour).
+	for i := 0; i < 20; i++ {
+		res, err := e.anon.PostForm(e.ts.URL+"/f/"+ir.Slug, url.Values{"password": {"wrong"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+	}
+	res, err := e.anon.PostForm(e.ts.URL+"/f/"+ir.Slug, url.Values{"password": {"wrong"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", res.StatusCode)
+	}
+}
+
+func TestStaticCacheHeaders(t *testing.T) {
+	e := newEnv(t)
+	res, err := e.anon.Get(e.ts.URL + "/static/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	cc := res.Header.Get("Cache-Control")
+	if !strings.Contains(cc, "max-age=") {
+		t.Fatalf("Cache-Control = %q, want max-age", cc)
+	}
+}
+
+func TestUploadAbort(t *testing.T) {
+	e := newEnv(t)
+	content := randomContent(chunkSize + 10)
+	res := e.doJSON(t, e.client, "POST", "/api/uploads", map[string]any{
+		"name": "abort.bin", "size": len(content), "storage": "local",
+	})
+	ir := decode[initResp](t, res)
+	req, _ := http.NewRequest("PUT",
+		fmt.Sprintf("%s/api/uploads/%s/chunks/0", e.ts.URL, ir.ID),
+		bytes.NewReader(content[:chunkSize]))
+	r1, err := e.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1.Body.Close()
+
+	res = e.doJSON(t, e.client, "DELETE", "/api/uploads/"+ir.ID, nil)
+	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		t.Fatalf("abort: %d %s", res.StatusCode, body)
+	}
+	res.Body.Close()
+
+	if _, err := e.st.GetUpload(ir.ID); err != store.ErrNotFound {
+		t.Fatalf("upload still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.dataDir, "tmp", ir.Slug)); !os.IsNotExist(err) {
+		t.Fatalf("tmp object still present: %v", err)
 	}
 }

@@ -3,7 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,7 +14,10 @@ import (
 	"melodyshare/internal/store"
 )
 
-const downloadTokenTTL = 6 * time.Hour
+const (
+	downloadTokenTTL      = 6 * time.Hour
+	downloadPasswordLimit = 20 // wrong/right password posts per IP per hour
+)
 
 func (s *Server) lookupShared(w http.ResponseWriter, r *http.Request) *store.File {
 	f, err := s.st.GetFileBySlug(r.PathValue("slug"))
@@ -23,7 +26,7 @@ func (s *Server) lookupShared(w http.ResponseWriter, r *http.Request) *store.Fil
 		return nil
 	}
 	if err != nil {
-		log.Printf("lookup shared %q: %v", r.PathValue("slug"), err)
+		slog.Error("lookup shared", "slug", r.PathValue("slug"), "err", err)
 		s.renderMessage(w, http.StatusInternalServerError, "暂时无法打开", "请稍后重试。")
 		return nil
 	}
@@ -141,6 +144,12 @@ func (s *Server) handleDownloadPassword(w http.ResponseWriter, r *http.Request) 
 		http.Redirect(w, r, "/f/"+f.Slug, http.StatusSeeOther)
 		return
 	}
+	// Rate-limit password attempts per IP so the fixed delay alone cannot be
+	// parallelized across many connections.
+	if !s.downloadLimiter.allow(s.clientIP(r) + "|" + f.Slug) {
+		s.renderMessage(w, http.StatusTooManyRequests, "尝试次数过多", "请稍后再试。")
+		return
+	}
 	password := r.FormValue("password")
 	if bcrypt.CompareHashAndPassword([]byte(f.PasswordHash), []byte(password)) != nil {
 		time.Sleep(500 * time.Millisecond)
@@ -160,11 +169,19 @@ func (s *Server) handleDownloadBytes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Count once per transfer: initial requests only, not the follow-up
-	// Range requests of a resumed/multi-threaded download.
+	// Range requests of a resumed/multi-threaded download. The update is
+	// conditional so concurrent first-byte requests cannot exceed max_downloads.
 	rangeHdr := r.Header.Get("Range")
 	if rangeHdr == "" || strings.HasPrefix(rangeHdr, "bytes=0-") {
-		if err := s.st.IncrementDownloads(f.ID); err != nil {
-			log.Printf("count download %s: %v", f.Slug, err)
+		ok, err := s.st.TryIncrementDownloads(f.ID)
+		if err != nil {
+			slog.Error("count download", "slug", f.Slug, "err", err)
+			s.renderMessage(w, http.StatusInternalServerError, "服务器错误", "请稍后重试。")
+			return
+		}
+		if !ok {
+			s.renderMessage(w, http.StatusGone, "下载次数已用完", "该分享链接的下载次数已达上限。")
+			return
 		}
 	}
 	s.serveFileBytes(w, r, f, false)
@@ -195,12 +212,12 @@ func (s *Server) serveFileBytes(w http.ResponseWriter, r *http.Request, f *store
 			http.Redirect(w, r, u, http.StatusFound)
 			return
 		}
-		log.Printf("presign get %s: %v (falling back to proxy)", f.Slug, err)
+		slog.Warn("presign get failed, falling back to proxy", "slug", f.Slug, "err", err)
 	}
 
 	rs, _, err := backend.Open(r.Context(), f.Slug)
 	if err != nil {
-		log.Printf("open %s (%s): %v", f.Slug, f.Storage, err)
+		slog.Error("open file", "slug", f.Slug, "storage", f.Storage, "err", err)
 		s.renderMessage(w, http.StatusInternalServerError, "服务器错误", "读取文件失败，请稍后重试。")
 		return
 	}

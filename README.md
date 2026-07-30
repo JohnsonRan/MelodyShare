@@ -27,7 +27,12 @@ Cloudflare R2。为部署在 Cloudflare 代理之后设计：**客户端自动�
 - 免登录**网络剪切板** `/p`：网页或命令行粘贴文本得短链，默认 2 小时过期（最长 24 小时），
   到期自动删除；短链对浏览器显示带复制按钮的页面、对 curl 直接输出原文；
   单条上限与总开关可在设置页调整，另有每 IP 每小时 30 条的频率限制
-- 后台自动清理过期文件与超过 72 小时未完成的上传
+- 后台自动清理过期文件、下载次数用尽的文件、超过 72 小时未完成的上传，以及本地孤儿对象
+- 下载次数原子扣减（并发不会超卖）；上传完成时文件元数据与 upload 记录同事务提交
+- `/healthz` 健康检查（Docker HEALTHCHECK 已配置）；可选 `SHARE_TRUSTED_PROXIES` 限制 XFF 信任范围
+- 分享密码尝试按 IP 限流
+- 上传队列可取消（中止分片、清理服务端未完成上传）；结构化访问日志（slog）；静态资源 `Cache-Control` 缓存
+- 文件列表多选批量删除；分享预览页本地生成二维码（无外链）；管理端 JS 拆分为 `app-*.js` 模块
 
 ## 快速开始
 
@@ -57,6 +62,7 @@ docker compose up -d   # 先改 docker-compose.yml 里的 SHARE_PASSWORD
 | `SHARE_PASSWORD` | — | 登录密码，**首次运行必填** |
 | `SHARE_BASE_URL` | 按请求推断 | 分享链接前缀，如 `https://share.example.com` |
 | `SHARE_CHUNK_SIZE_MB` | `auto` | 分片大小：`auto` 按文件大小自适应（5–95，分片数随之确定），或固定 5–95 |
+| `SHARE_TRUSTED_PROXIES` | — | 可信反向代理 IP/CIDR（逗号分隔）。**设置后**仅当直连对端在列表内时才信任 `X-Forwarded-For`；留空则保持兼容行为（始终取 XFF 最右侧，适合 Cloudflare 单层代理） |
 | `SHARE_R2_ENDPOINT` | — | `<accountid>.r2.cloudflarestorage.com` |
 | `SHARE_R2_ACCESS_KEY` / `SHARE_R2_SECRET_KEY` / `SHARE_R2_BUCKET` | — | R2 凭据与桶，四项全配才启用 |
 

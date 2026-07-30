@@ -118,6 +118,45 @@ func TestFocusedPublicPageContracts(t *testing.T) {
 	}
 }
 
+func TestPreviewQRCodeAssetsAndContracts(t *testing.T) {
+	e := newEnv(t)
+	file := e.upload(t, "qr-notes.txt", []byte("QR preview"), "", 0)
+	body := readPage(t, e.anon, e.ts.URL, "/f/"+file.Slug)
+	requireMarkup(t, body,
+		`id="shareQr"`,
+		`class="share-qr"`,
+		`/static/qr.js`,
+		`/static/preview.js`,
+	)
+
+	for _, name := range []string{"qr.js", "preview.js"} {
+		res, err := e.anon.Get(e.ts.URL + "/static/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("GET /static/%s: status=%d", name, res.StatusCode)
+		}
+	}
+
+	qr, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "qr.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "preview.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	css, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "public.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireMarkup(t, string(qr), `window.QRCode`, `canvas`)
+	requireMarkup(t, string(preview), `location.href`, `QRCode.render`)
+	requireMarkup(t, string(css), `.share-qr`, `.share-qr-code`)
+}
+
 func TestPublicPagesDoNotLoadRemoteAssets(t *testing.T) {
 	files := []string{"style.css", "public.css"}
 	for _, name := range files {
@@ -154,21 +193,36 @@ func TestAppSelectorsExistInIndexTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scriptBytes, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "app.js"))
+	index := string(indexBytes)
+	scripts, err := filepath.Glob(filepath.Join("..", "..", "web", "static", "app*.js"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := string(indexBytes)
+	if len(scripts) < 2 {
+		t.Fatalf("expected split app*.js modules, found %v", scripts)
+	}
 	selector := regexp.MustCompile(`\$\('([A-Za-z][A-Za-z0-9_-]*)'\)`)
 	seen := map[string]bool{}
-	for _, match := range selector.FindAllStringSubmatch(string(scriptBytes), -1) {
-		id := match[1]
-		if seen[id] {
-			continue
+	for _, path := range scripts {
+		scriptBytes, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		seen[id] = true
-		if !strings.Contains(index, `id="`+id+`"`) {
-			t.Errorf("app.js expects missing index.html id %q", id)
+		for _, match := range selector.FindAllStringSubmatch(string(scriptBytes), -1) {
+			id := match[1]
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if !strings.Contains(index, `id="`+id+`"`) {
+				t.Errorf("%s expects missing index.html id %q", filepath.Base(path), id)
+			}
+		}
+	}
+	// index must load the modules in dependency order
+	for _, name := range []string{"app-core.js", "app-upload.js", "app-files.js", "app-settings.js", "app.js"} {
+		if !strings.Contains(index, `/static/`+name) {
+			t.Errorf("index.html missing script %s", name)
 		}
 	}
 }
@@ -201,6 +255,9 @@ func TestManagementListContainers(t *testing.T) {
 		`class="record-list"`,
 		`id="emptyHint"`,
 		`id="stats"`,
+		`id="fileBatchBar"`,
+		`id="fileSelectAll"`,
+		`id="fileBatchDelete"`,
 		`id="pasteList"`,
 		`id="pasteEmptyHint"`,
 	)
@@ -270,15 +327,30 @@ func TestThemeHasLightDarkAndReducedMotionRules(t *testing.T) {
 }
 
 func TestAppKeyboardInteractionContracts(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "..", "web", "static", "app.js"))
+	scripts, err := filepath.Glob(filepath.Join("..", "..", "web", "static", "app*.js"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireMarkup(t, string(script),
+	var b strings.Builder
+	for _, path := range scripts {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(body)
+		b.WriteByte('\n')
+	}
+	script := b.String()
+	requireMarkup(t, script,
 		`event.key === 'Enter' || event.key === ' '`,
 		`dropzone.contains(event.relatedTarget)`,
 		`event.key !== 'Escape'`,
 		`.record-menu[open]`,
+		`upload-cancel`,
+		`AbortController`,
+		`DELETE`,
+		`/api/uploads/`,
+		`batch-delete`,
 	)
 }
 

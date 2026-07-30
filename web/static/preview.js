@@ -1,5 +1,16 @@
 'use strict';
 
+// QR is generated locally from the complete current URL, including any access token.
+(() => {
+  const target = document.getElementById('shareQr');
+  if (!target || !window.QRCode) return;
+  try {
+    window.QRCode.render(target, location.href);
+  } catch {
+    target.hidden = true;
+  }
+})();
+
 // Text preview: fetch the first 64KB of the file into the <pre>.
 (async () => {
   const pre = document.getElementById('textPreview');

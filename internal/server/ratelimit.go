@@ -3,6 +3,7 @@ package server
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -53,19 +54,47 @@ func (rl *rateLimiter) allow(key string) bool {
 	return true
 }
 
-// clientIP identifies the requester for rate limiting. When X-Forwarded-For
-// is present the RIGHTMOST value wins: it was appended by the nearest trusted
-// proxy (Cloudflare), while earlier values are client-supplied and spoofable.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.LastIndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[i+1:])
+// clientIP identifies the requester for rate limiting.
+//
+// When TrustedProxies is empty (default), X-Forwarded-For is honored the same
+// way as before: the RIGHTMOST value wins, matching a Cloudflare-fronted
+// single-proxy deploy. When TrustedProxies is set, XFF is only trusted if
+// RemoteAddr falls in that set — otherwise the direct peer address is used.
+func (s *Server) clientIP(r *http.Request) string {
+	return clientIP(r, s.cfg.TrustedProxies)
+}
+
+func clientIP(r *http.Request, trusted []netip.Prefix) string {
+	host := remoteHost(r.RemoteAddr)
+	honorXFF := len(trusted) == 0 || ipInPrefixes(host, trusted)
+	if honorXFF {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if i := strings.LastIndexByte(xff, ','); i >= 0 {
+				return strings.TrimSpace(xff[i+1:])
+			}
+			return strings.TrimSpace(xff)
 		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
 	}
 	return host
+}
+
+func remoteHost(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
+}
+
+func ipInPrefixes(host string, prefixes []netip.Prefix) bool {
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	for _, p := range prefixes {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }

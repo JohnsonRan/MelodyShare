@@ -43,7 +43,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(auth.SessionCookie); err == nil {
 		s.auth.Logout(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{
+		Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Secure: r.Header.Get("X-Forwarded-Proto") == "https" || r.TLS != nil,
+	})
 	jsonOK(w)
 }
 
@@ -52,4 +56,16 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"chunkSize": s.rt.ChunkSize(),
 		"r2Enabled": s.rt.R2() != nil,
 	})
+}
+
+// handleHealthz is an unauthenticated liveness/readiness probe for Docker and
+// reverse proxies. It verifies the process is up and SQLite answers.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if err := s.st.Ping(); err != nil {
+		http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok\n"))
 }

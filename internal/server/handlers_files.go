@@ -117,13 +117,63 @@ func (s *Server) handleFileDelete(w http.ResponseWriter, r *http.Request) {
 	if f == nil {
 		return
 	}
-	if err := s.storageFor(f.Storage).Delete(r.Context(), f.Slug); err != nil {
-		jsonError(w, http.StatusInternalServerError, "delete file: "+err.Error())
-		return
-	}
-	if err := s.st.DeleteFile(f.ID); err != nil {
+	if err := s.deleteFile(r, f); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	jsonOK(w)
+}
+
+// deleteFile removes a file's storage object before deleting its database row.
+func (s *Server) deleteFile(r *http.Request, f *store.File) error {
+	if err := s.storageFor(f.Storage).Delete(r.Context(), f.Slug); err != nil {
+		return errors.New("delete file: " + err.Error())
+	}
+	return s.st.DeleteFile(f.ID)
+}
+
+func (s *Server) handleFileBatchDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs []int64 `json:"ids"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.IDs) == 0 {
+		jsonError(w, http.StatusBadRequest, "ids is required")
+		return
+	}
+	if len(req.IDs) > 100 {
+		jsonError(w, http.StatusBadRequest, "too many ids")
+		return
+	}
+
+	type failed struct {
+		ID    int64  `json:"id"`
+		Error string `json:"error"`
+	}
+	deleted := make([]int64, 0, len(req.IDs))
+	failures := make([]failed, 0)
+	seen := make(map[int64]struct{}, len(req.IDs))
+	for _, id := range req.IDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+
+		f, err := s.st.GetFileByID(id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			failures = append(failures, failed{ID: id, Error: err.Error()})
+			continue
+		}
+		if err := s.deleteFile(r, f); err != nil {
+			failures = append(failures, failed{ID: id, Error: err.Error()})
+			continue
+		}
+		deleted = append(deleted, id)
+	}
+	jsonWrite(w, http.StatusOK, map[string]any{"deleted": deleted, "failed": failures})
 }

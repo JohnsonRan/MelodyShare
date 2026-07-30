@@ -12,6 +12,7 @@ services:
       SHARE_PASSWORD: change-me
       # SHARE_BASE_URL: https://share.example.com
       # SHARE_CHUNK_SIZE_MB: "auto"   # auto 按文件大小自适应，或固定 5–95
+      # SHARE_TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12"  # 设置后仅信任这些代理的 XFF
       # --- 可选：Cloudflare R2 存储（四项都填才会启用） ---
       # SHARE_R2_ENDPOINT: <accountid>.r2.cloudflarestorage.com
       # SHARE_R2_ACCESS_KEY: ...

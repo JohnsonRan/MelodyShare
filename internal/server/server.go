@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,7 +26,8 @@ type Server struct {
 	tpl   *template.Template
 	mux   *http.ServeMux
 
-	pasteLimiter *rateLimiter
+	pasteLimiter    *rateLimiter
+	downloadLimiter *rateLimiter // share-password guesses per IP
 }
 
 // New builds the server. r2Override, when non-nil, is used instead of
@@ -41,14 +42,19 @@ func New(cfg *config.Config, st *store.Store, am *auth.Manager, local, r2Overrid
 		return nil, err
 	}
 	s := &Server{cfg: cfg, st: st, auth: am, local: local, rt: rt, tpl: tpl, mux: http.NewServeMux(),
-		pasteLimiter: newRateLimiter(pasteRateLimit, time.Hour)}
+		pasteLimiter:    newRateLimiter(pasteRateLimit, time.Hour),
+		downloadLimiter: newRateLimiter(downloadPasswordLimit, time.Hour)}
 
 	static, err := fs.Sub(webFS, "static")
 	if err != nil {
 		return nil, err
 	}
-	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(static)))
+	// Embedded static changes only on redeploy; cache for a week. HTML pages
+	// stay uncached so UI updates are visible immediately after upgrade.
+	s.mux.Handle("GET /static/", cacheControl("public, max-age=604800",
+		http.StripPrefix("/static/", http.FileServerFS(static))))
 
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /login", s.handleLoginPage)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
@@ -63,6 +69,7 @@ func New(cfg *config.Config, st *store.Store, am *auth.Manager, local, r2Overrid
 	s.mux.Handle("POST /api/uploads/{id}/complete", s.requireAuth(s.handleUploadComplete))
 	s.mux.Handle("DELETE /api/uploads/{id}", s.requireAuth(s.handleUploadAbort))
 	s.mux.Handle("GET /api/files", s.requireAuth(s.handleFileList))
+	s.mux.Handle("POST /api/files/batch-delete", s.requireAuth(s.handleFileBatchDelete))
 	s.mux.Handle("GET /api/stats", s.requireAuth(s.handleStats))
 	s.mux.Handle("GET /api/settings", s.requireAuth(s.handleSettingsGet))
 	s.mux.Handle("PUT /api/settings", s.requireAuth(s.handleSettingsUpdate))
@@ -91,7 +98,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer") // keeps ?t= download tokens out of referrers
 	h.Set("Content-Security-Policy", s.rt.CSP())
-	s.mux.ServeHTTP(w, r)
+	s.withAccessLog(s.mux).ServeHTTP(w, r)
 }
 
 func (s *Server) storageFor(name string) storage.Storage {
@@ -171,7 +178,7 @@ func (s *Server) renderTemplate(w http.ResponseWriter, status int, name string, 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := s.tpl.ExecuteTemplate(w, name, data); err != nil {
-		log.Printf("render %s: %v", name, err)
+		slog.Error("render template", "template", name, "err", err)
 	}
 }
 

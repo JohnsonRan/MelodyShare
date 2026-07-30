@@ -41,3 +41,9 @@ type Presigner interface {
 	// and contentType override the response headers the store sends.
 	PresignGet(ctx context.Context, key, disposition, contentType string) (string, error)
 }
+
+// ObjectLister is implemented by backends that can enumerate finished object
+// keys (used by orphan reconciliation during cleanup).
+type ObjectLister interface {
+	ListKeys(ctx context.Context) ([]string, error)
+}

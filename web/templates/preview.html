@@ -20,6 +20,10 @@
     </div>
     <a class="button button-primary" href="{{.DlURL}}" download>下载</a>
   </div>
+  <div class="share-qr" aria-label="手机扫码打开">
+    <p class="share-qr-label">扫码打开</p>
+    <div id="shareQr" class="share-qr-code"></div>
+  </div>
   <section class="preview-stage" aria-label="文件预览">
     {{if eq .Kind "image"}}<img class="preview-media" src="{{.RawURL}}" alt="{{.Name}}">
     {{else if eq .Kind "video"}}<video class="preview-media" src="{{.RawURL}}" controls preload="metadata"></video>
@@ -32,6 +36,7 @@
   {{if .Note}}<p class="notice preview-note">{{.Note}}</p>{{end}}
   {{if .Remaining}}<p class="notice preview-note">剩余 {{.Remaining}} 次下载</p>{{end}}
 </main>
-{{if eq .Kind "text"}}<script src="/static/preview.js"></script>{{end}}
+<script src="/static/qr.js"></script>
+<script src="/static/preview.js"></script>
 </body>
 </html>

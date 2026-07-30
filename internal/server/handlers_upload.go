@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -306,7 +306,8 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
 		}
 		etags[i] = p.ETag
 	}
-	if err := s.storageFor(up.Storage).Complete(r.Context(), up.Slug, up.ProviderID, etags); err != nil {
+	backend := s.storageFor(up.Storage)
+	if err := backend.Complete(r.Context(), up.Slug, up.ProviderID, etags); err != nil {
 		jsonError(w, http.StatusInternalServerError, "complete upload: "+err.Error())
 		return
 	}
@@ -329,16 +330,19 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
 	if up.ExpiresIn > 0 {
 		f.ExpiresAt = now + up.ExpiresIn
 	}
-	if err := s.st.CreateFile(f); err != nil {
+	// Create the file row and drop the upload row together. If metadata write
+	// fails after storage.Complete, best-effort delete the object so it does
+	// not become an orphan (except on slug conflict — another file owns the key).
+	if err := s.st.FinalizeUpload(f, up.ID); err != nil {
 		if store.IsUniqueViolation(err) {
 			jsonError(w, http.StatusConflict, "该链接在上传期间被其他文件占用了")
 			return
 		}
+		if delErr := backend.Delete(r.Context(), up.Slug); delErr != nil {
+			slog.Error("orphan after failed finalize", "slug", up.Slug, "err", delErr)
+		}
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if err := s.st.DeleteUpload(up.ID); err != nil {
-		log.Printf("delete upload %s: %v", up.ID, err)
 	}
 	jsonWrite(w, http.StatusOK, map[string]any{"file": f, "url": s.fileURL(r, f.Slug)})
 }
@@ -349,7 +353,7 @@ func (s *Server) handleUploadAbort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.storageFor(up.Storage).Abort(r.Context(), up.Slug, up.ProviderID); err != nil {
-		log.Printf("abort upload %s: %v", up.ID, err)
+		slog.Warn("abort upload", "id", up.ID, "err", err)
 	}
 	if err := s.st.DeleteUpload(up.ID); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())

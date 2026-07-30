@@ -83,3 +83,19 @@ func (l *Local) Delete(ctx context.Context, key string) error {
 	}
 	return err
 }
+
+// ListKeys returns finished object keys under the files directory.
+func (l *Local) ListKeys(ctx context.Context) ([]string, error) {
+	entries, err := os.ReadDir(l.filesDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out, nil
+}

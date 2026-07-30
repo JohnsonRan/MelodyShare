@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -31,15 +32,31 @@ func TestRateLimiterWindow(t *testing.T) {
 func TestClientIP(t *testing.T) {
 	r := httptest.NewRequest("POST", "/p", nil)
 	r.RemoteAddr = "10.0.0.1:1234"
-	if got := clientIP(r); got != "10.0.0.1" {
+	if got := clientIP(r, nil); got != "10.0.0.1" {
 		t.Fatalf("clientIP = %q, want 10.0.0.1", got)
 	}
 	r.Header.Set("X-Forwarded-For", "203.0.113.9, 172.16.0.1")
-	if got := clientIP(r); got != "172.16.0.1" {
+	if got := clientIP(r, nil); got != "172.16.0.1" {
 		t.Fatalf("clientIP with XFF = %q, want 172.16.0.1 (rightmost)", got)
 	}
 	r.Header.Set("X-Forwarded-For", "198.51.100.7")
-	if got := clientIP(r); got != "198.51.100.7" {
+	if got := clientIP(r, nil); got != "198.51.100.7" {
 		t.Fatalf("clientIP with single XFF = %q, want 198.51.100.7", got)
+	}
+}
+
+func TestClientIPTrustedProxies(t *testing.T) {
+	proxy := netip.MustParsePrefix("10.0.0.1/32")
+	r := httptest.NewRequest("POST", "/p", nil)
+	r.RemoteAddr = "10.0.0.1:1234"
+	r.Header.Set("X-Forwarded-For", "203.0.113.9, 172.16.0.1")
+	if got := clientIP(r, []netip.Prefix{proxy}); got != "172.16.0.1" {
+		t.Fatalf("trusted proxy XFF = %q, want 172.16.0.1", got)
+	}
+
+	// Untrusted peer: ignore spoofed XFF.
+	r.RemoteAddr = "203.0.113.50:9999"
+	if got := clientIP(r, []netip.Prefix{proxy}); got != "203.0.113.50" {
+		t.Fatalf("untrusted peer = %q, want direct RemoteAddr", got)
 	}
 }

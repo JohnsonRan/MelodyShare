@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"net/netip"
+	"testing"
+)
 
 func TestLoadChunkSize(t *testing.T) {
 	cases := []struct {
@@ -35,5 +38,24 @@ func TestLoadChunkSize(t *testing.T) {
 				t.Fatalf("ChunkSize = %d, want %d", cfg.ChunkSize, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseTrustedProxies(t *testing.T) {
+	got, err := parseTrustedProxies("10.0.0.1, 172.16.0.0/12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if !got[0].Contains(netip.MustParseAddr("10.0.0.1")) || got[0].Bits() != 32 {
+		t.Fatalf("first prefix = %v", got[0])
+	}
+	if !got[1].Contains(netip.MustParseAddr("172.16.5.1")) {
+		t.Fatalf("second prefix = %v", got[1])
+	}
+	if _, err := parseTrustedProxies("not-an-ip"); err == nil {
+		t.Fatal("expected error for invalid entry")
 	}
 }

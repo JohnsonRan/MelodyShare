@@ -75,6 +75,11 @@
 
       <div class="section-heading file-heading">
         <div><h2>最近文件</h2><p id="stats" class="notice"></p></div>
+        <div class="batch-bar" id="fileBatchBar" hidden>
+          <label class="check-field batch-select-all"><input type="checkbox" id="fileSelectAll"><span>全选</span></label>
+          <span class="notice" id="fileSelectedCount">已选 0</span>
+          <button type="button" class="button button-quiet is-danger-text" id="fileBatchDelete" disabled>删除所选</button>
+        </div>
       </div>
       <div id="fileList" class="record-list" aria-live="polite"></div>
       <p id="emptyHint" class="empty-state" hidden>还没有文件</p>
@@ -163,6 +168,10 @@
 </dialog>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="/static/app-core.js"></script>
+<script src="/static/app-upload.js"></script>
+<script src="/static/app-files.js"></script>
+<script src="/static/app-settings.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

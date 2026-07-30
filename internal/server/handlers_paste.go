@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -30,7 +30,7 @@ func (s *Server) handlePasteCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, "剪切板功能未开启")
 		return
 	}
-	if !s.pasteLimiter.allow(clientIP(r)) {
+	if !s.pasteLimiter.allow(s.clientIP(r)) {
 		jsonError(w, http.StatusTooManyRequests, "创建太频繁，请稍后再试")
 		return
 	}
@@ -88,7 +88,7 @@ func (s *Server) handlePasteCreate(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if !store.IsUniqueViolation(err) || i == pasteSlugTries-1 {
-			log.Printf("create paste: %v", err)
+			slog.Error("create paste", "err", err)
 			jsonError(w, http.StatusInternalServerError, "创建失败，请稍后再试")
 			return
 		}
@@ -134,7 +134,7 @@ func (s *Server) lookupPaste(w http.ResponseWriter, r *http.Request) *store.Past
 		return nil
 	}
 	if err != nil {
-		log.Printf("lookup paste %q: %v", r.PathValue("slug"), err)
+		slog.Error("lookup paste", "slug", r.PathValue("slug"), "err", err)
 		s.pasteError(w, r, http.StatusInternalServerError, "暂时无法打开", "请稍后重试。")
 		return nil
 	}

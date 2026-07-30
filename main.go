@@ -4,7 +4,7 @@ import (
 	"context"
 	"embed"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,17 +23,22 @@ import (
 var embeddedWeb embed.FS
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("config", "err", err)
+		os.Exit(1)
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		log.Fatal(err)
+		slog.Error("data dir", "err", err)
+		os.Exit(1)
 	}
 
 	st, err := store.Open(filepath.Join(cfg.DataDir, "share.db"))
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("open store", "err", err)
+		os.Exit(1)
 	}
 	defer st.Close()
 
@@ -41,7 +46,8 @@ func main() {
 	// env vars; env is required only for the first run.
 	saved, err := st.AllSettings()
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("load settings", "err", err)
+		os.Exit(1)
 	}
 	username := cfg.Username
 	if saved["username"] != "" {
@@ -53,24 +59,29 @@ func main() {
 	} else if cfg.Password != "" {
 		am, err = auth.New(cfg.DataDir, username, cfg.Password, st)
 	} else {
-		log.Fatal("SHARE_PASSWORD is required on first run (no password saved in settings yet)")
+		slog.Error("SHARE_PASSWORD is required on first run (no password saved in settings yet)")
+		os.Exit(1)
 	}
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("auth", "err", err)
+		os.Exit(1)
 	}
 
 	local, err := storage.NewLocal(cfg.DataDir)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("local storage", "err", err)
+		os.Exit(1)
 	}
 
 	webFS, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("embed web", "err", err)
+		os.Exit(1)
 	}
 	srv, err := server.New(cfg, st, am, local, nil, webFS)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("server", "err", err)
+		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -81,21 +92,29 @@ func main() {
 		Addr:              cfg.Addr,
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       2 * time.Minute,
+		// Bound slowloris on the request body; large uploads still fit within
+		// this window because chunk PUTs are individual requests.
+		ReadTimeout: 15 * time.Minute,
+		IdleTimeout: 2 * time.Minute,
 	}
 	go func() {
 		<-ctx.Done()
-		log.Print("shutting down…")
+		slog.Info("shutting down")
 		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		httpServer.Shutdown(shutCtx)
 	}()
 
-	log.Printf("listening on %s (chunk size %d MiB)", cfg.Addr, cfg.ChunkSize/(1024*1024))
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+	if cfg.ChunkSize > 0 {
+		slog.Info("listening", "addr", cfg.Addr, "chunk_mib", cfg.ChunkSize/(1024*1024))
+	} else {
+		slog.Info("listening", "addr", cfg.Addr, "chunk_mib", "auto")
 	}
-	log.Print("bye")
+	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		slog.Error("listen", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("bye")
 }
 
 // cleanupLoop removes expired files and abandoned partial uploads.
@@ -105,7 +124,7 @@ func cleanupLoop(ctx context.Context, srv *server.Server) {
 	for {
 		cleanCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		if err := srv.Cleanup(cleanCtx); err != nil {
-			log.Printf("cleanup: %v", err)
+			slog.Error("cleanup", "err", err)
 		}
 		cancel()
 		select {

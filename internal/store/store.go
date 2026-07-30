@@ -73,6 +73,18 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("migrate: %w", err)
 		}
 	}
+	for _, idx := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_files_expires ON files(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_files_exhausted ON files(max_downloads, downloads)`,
+		`CREATE INDEX IF NOT EXISTS idx_uploads_created ON uploads(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_pastes_expires ON pastes(expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`,
+	} {
+		if _, err := db.Exec(idx); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate index: %w", err)
+		}
+	}
 	return &Store{db: db}, nil
 }
 
@@ -135,6 +147,9 @@ CREATE TABLE IF NOT EXISTS pastes (
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// Ping checks that the database is reachable.
+func (s *Store) Ping() error { return s.db.Ping() }
+
 const slugChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 func NewSlug() string { return randomString(8, slugChars) }
@@ -182,6 +197,33 @@ func (s *Store) CreateFile(f *File) error {
 	return err
 }
 
+// FinalizeUpload inserts the finished file and removes the in-progress upload
+// (and its parts) in one transaction so a crash cannot leave only half of the
+// metadata behind.
+func (s *Store) FinalizeUpload(f *File, uploadID string) error {
+	f.HasPassword = f.PasswordHash != ""
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
+		`INSERT INTO files (slug, name, size, storage, content_type, password_hash, created_at, expires_at, downloads, max_downloads)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.Slug, f.Name, f.Size, f.Storage, f.ContentType, f.PasswordHash, f.CreatedAt, f.ExpiresAt, f.Downloads, f.MaxDownloads)
+	if err != nil {
+		return err
+	}
+	f.ID, err = res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM uploads WHERE id = ?`, uploadID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func scanFile(row interface{ Scan(...any) error }) (*File, error) {
 	var f File
 	err := row.Scan(&f.ID, &f.Slug, &f.Name, &f.Size, &f.Storage, &f.ContentType, &f.PasswordHash, &f.CreatedAt, &f.ExpiresAt, &f.Downloads, &f.MaxDownloads)
@@ -221,6 +263,15 @@ func (s *Store) ListExpiredFiles(now int64) ([]*File, error) {
 	return scanAll(rows, scanFile)
 }
 
+// ListExhaustedFiles returns shares that have used up their download quota.
+func (s *Store) ListExhaustedFiles() ([]*File, error) {
+	rows, err := s.db.Query(`SELECT ` + fileCols + ` FROM files WHERE max_downloads > 0 AND downloads >= max_downloads`)
+	if err != nil {
+		return nil, err
+	}
+	return scanAll(rows, scanFile)
+}
+
 func (s *Store) UpdateFile(id int64, expiresAt int64, passwordHash string, maxDownloads int64) error {
 	_, err := s.db.Exec(`UPDATE files SET expires_at = ?, password_hash = ?, max_downloads = ? WHERE id = ?`,
 		expiresAt, passwordHash, maxDownloads, id)
@@ -230,6 +281,40 @@ func (s *Store) UpdateFile(id int64, expiresAt int64, passwordHash string, maxDo
 func (s *Store) IncrementDownloads(id int64) error {
 	_, err := s.db.Exec(`UPDATE files SET downloads = downloads + 1 WHERE id = ?`, id)
 	return err
+}
+
+// TryIncrementDownloads atomically consumes one download slot. It returns
+// ok=false when the file is missing or has already hit max_downloads (without
+// changing the counter). Unlimited files (max_downloads = 0) always succeed
+// when the row exists.
+func (s *Store) TryIncrementDownloads(id int64) (ok bool, err error) {
+	res, err := s.db.Exec(
+		`UPDATE files SET downloads = downloads + 1
+		 WHERE id = ? AND (max_downloads = 0 OR downloads < max_downloads)`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// KnownObjectSlugs returns every slug that currently has either a finished
+// file row or an in-progress upload — used to detect orphaned storage objects.
+func (s *Store) KnownObjectSlugs() (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	rows, err := s.db.Query(`SELECT slug FROM files UNION SELECT slug FROM uploads`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var slug string
+		if err := rows.Scan(&slug); err != nil {
+			return nil, err
+		}
+		out[slug] = struct{}{}
+	}
+	return out, rows.Err()
 }
 
 type Usage struct {
